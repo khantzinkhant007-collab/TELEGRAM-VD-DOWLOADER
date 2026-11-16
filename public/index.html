@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Telegram Video Batch Downloader — Inspect public and private Telegram links, preview live video streams, select multi-video albums, queue multiple links into a batch list, and download all videos at once." />
+  <title>TeleBatch — Telegram Video Batch Downloader</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Top Navigation / Status Header -->
+    <header class="app-header">
+      <div class="header-brand">
+        <div class="brand-logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 2L11 13" />
+            <path d="M22 2L15 22L11 13L2 9L22 2Z" />
+          </svg>
+        </div>
+        <div>
+          <h1 class="brand-title">TeleBatch Downloader</h1>
+          <p class="brand-subtitle">Public &amp; Private Telegram Multi-Video Batch Queue</p>
+        </div>
+      </div>
+
+      <div class="header-controls">
+        <div id="healthBadge" class="status-pill status-checking" role="status" aria-live="polite">
+          <span class="status-dot"></span>
+          <span id="healthText">Checking API...</span>
+        </div>
+
+        <button type="button" id="authToggleBtn" class="btn btn-secondary btn-sm" aria-expanded="false" aria-controls="authPanel">
+          <span id="authModeIndicator" class="auth-dot auth-demo"></span>
+          <span id="authBtnLabel">Connect Telegram for Private Videos</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Workflow Progress Bar -->
+    <section class="workflow-banner" aria-label="How batch downloading works">
+      <div class="workflow-step active" id="stepIndicator1">
+        <span class="step-num">1</span>
+        <div class="step-info">
+          <strong>Paste Telegram Link</strong>
+          <span>Public <code>t.me/channel/123</code> or Private <code>t.me/c/chatId/123</code></span>
+        </div>
+      </div>
+      <div class="workflow-arrow" aria-hidden="true">&rarr;</div>
+      <div class="workflow-step" id="stepIndicator2">
+        <span class="step-num">2</span>
+        <div class="step-info">
+          <strong>Preview, Select &amp; Save</strong>
+          <span>Preview inline, Select All videos &amp; save to queue</span>
+        </div>
+      </div>
+      <div class="workflow-arrow" aria-hidden="true">&rarr;</div>
+      <div class="workflow-step" id="stepIndicator3">
+        <span class="step-num">3</span>
+        <div class="step-info">
+          <strong>Repeat &amp; Download All</strong>
+          <span>Add more links, then download all as ZIP or MP4s</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Collapsible MTProto Private Channel Auth Panel -->
+    <section id="authPanel" class="card auth-panel hidden" aria-labelledby="authPanelTitle">
+      <div class="card-header">
+        <div>
+          <h2 id="authPanelTitle" class="card-title">Telegram Private Channel Session (MTProto)</h2>
+          <p class="card-subtitle" id="authStatusMessage">
+            Connect your Telegram session to resolve private <code>https://t.me/c/...</code> links from chats you belong to, or paste any public <code>https://t.me/...</code> video link immediately.
+          </p>
+          <p class="form-hint">For production deployments, configure <code>TELEGRAM_COOKIE_SECRET</code> with at least 32 random characters before signing in.</p>
+        </div>
+        <button type="button" id="closeAuthPanelBtn" class="btn btn-ghost btn-sm" aria-label="Close authentication panel">&times; Close</button>
+      </div>
+
+      <form id="authForm" class="auth-form" autocomplete="off" novalidate>
+        <div class="auth-grid">
+          <div class="form-group">
+            <label for="apiIdInput">API ID</label>
+            <input type="text" id="apiIdInput" name="apiId" placeholder="e.g. 12345678 (from my.telegram.org)" autocomplete="off" />
+          </div>
+          <div class="form-group">
+            <label for="apiHashInput">API Hash</label>
+            <input type="password" id="apiHashInput" name="apiHash" placeholder="32-character API Hash" autocomplete="off" />
+          </div>
+          <div class="form-group">
+            <label for="phoneInput">Phone Number</label>
+            <input type="tel" id="phoneInput" name="phoneNumber" placeholder="+12345678900" autocomplete="off" />
+          </div>
+          <div class="form-group">
+            <label for="sessionStringInput">Existing Telegram Session String (Optional)</label>
+            <input type="password" id="sessionStringInput" name="sessionString" placeholder="Paste a saved session string" autocomplete="off" />
+            <small class="form-hint">Session details are stored in a protected cookie for this browser. Treat any manually entered session string like your password.</small>
+          </div>
+        </div>
+
+        <div id="authVerificationFields" class="auth-grid auth-step-fields hidden">
+          <div class="form-group" id="phoneCodeGroup">
+            <label for="phoneCodeInput">Telegram Login Code</label>
+            <input type="text" id="phoneCodeInput" id-ref="phoneCodeInput" name="phoneCode" placeholder="Enter 5-digit code sent to Telegram" autocomplete="one-time-code" />
+          </div>
+          <div class="form-group" id="passwordGroup">
+            <label for="passwordInput">2FA Cloud Password (if enabled)</label>
+            <input type="password" id="passwordInput" name="password" placeholder="Two-step verification password" autocomplete="off" />
+          </div>
+        </div>
+
+        <div class="auth-actions">
+          <button type="submit" id="authSubmitBtn" class="btn btn-primary">Connect Telegram Session</button>
+          <button type="button" id="authDisconnectBtn" class="btn btn-danger hidden">Disconnect Session</button>
+          <span id="authFeedbackText" class="auth-feedback" role="status" aria-live="polite"></span>
+        </div>
+      </form>
+    </section>
+
+    <!-- Main 2-Column Workspace -->
+    <main class="workspace-grid">
+      <!-- Left Column: Link Input + Video Inspector / Selector -->
+      <div class="workspace-col">
+        <!-- Step 1: Link Resolver Card -->
+        <section class="card" aria-labelledby="resolveCardTitle">
+          <div class="card-header">
+            <div>
+              <span class="step-badge">Step 1</span>
+              <h2 id="resolveCardTitle" class="card-title">Inspect Telegram Video Link</h2>
+              <p class="card-subtitle">Paste a public channel post or private group/channel link (<code>t.me/c/...</code>) to extract and preview all videos inside.</p>
+            </div>
+          </div>
+
+          <form id="resolveForm" class="resolve-form" novalidate>
+            <div class="url-input-row">
+              <label for="telegramUrlInput" class="sr-only">Telegram Video Link</label>
+              <div class="input-with-clear">
+                <input
+                  type="url"
+                  id="telegramUrlInput"
+                  name="url"
+                  class="url-input"
+                  placeholder="https://t.me/v131312/7402 or https://t.me/c/192837465/104"
+                  required
+                  autocomplete="off"
+                />
+                <button type="button" id="clearUrlBtn" class="clear-input-btn hidden" title="Clear link input" aria-label="Clear link input">&times;</button>
+              </div>
+              <button type="submit" id="inspectBtn" class="btn btn-primary btn-lg">
+                <span id="inspectBtnText">Inspect Link</span>
+              </button>
+            </div>
+
+            <div id="resolveErrorBox" class="alert alert-error hidden" role="alert"></div>
+
+            <!-- Sample Quick-Fill Links for Fast Testing -->
+            <div class="sample-links-bar">
+              <span class="sample-label">Try links:</span>
+              <button type="button" class="chip-btn sample-link-btn" data-url="https://t.me/v131312/7402">
+                🌐 Live Post (v131312/7402)
+              </button>
+              <button type="button" class="chip-btn sample-link-btn" data-url="https://t.me/OFOSSS/4117">
+                🌐 Live Post (OFOSSS/4117)
+              </button>
+              <button type="button" class="chip-btn sample-link-btn" data-url="https://t.me/c/192837465/104">
+                🔒 Private Album (c/192837465/104)
+              </button>
+              <button type="button" class="chip-btn sample-link-btn" data-url="https://t.me/durov/243">
+                🌐 Public Channel (durov/243)
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <!-- Step 2: Inspected Videos & Multi-Select Card -->
+        <section id="inspectorSection" class="card inspector-card" aria-labelledby="inspectorCardTitle">
+          <div class="card-header inspector-header">
+            <div>
+              <span class="step-badge">Step 2</span>
+              <h2 id="inspectorCardTitle" class="card-title">Select Videos from Link</h2>
+              <p class="card-subtitle" id="inspectorSubtitle">Inspect a link above to view, preview, and select its videos.</p>
+            </div>
+            <div id="resolvedMetaBadges" class="meta-badges hidden">
+              <span id="resolvedPrivacyBadge" class="badge"></span>
+              <span id="resolvedSourceBadge" class="badge hidden"></span>
+              <span id="resolvedCountBadge" class="badge badge-accent"></span>
+            </div>
+          </div>
+
+          <!-- Empty State before inspecting -->
+          <div id="inspectorEmptyState" class="empty-state">
+            <div class="empty-icon" aria-hidden="true">🎬</div>
+            <h3>No Link Inspected Yet</h3>
+            <p>Paste a Telegram link above and click <strong>Inspect Link</strong>. You can preview videos inline, select all videos in a multi-video album, and save them to your batch queue.</p>
+          </div>
+
+          <!-- Active Inspector Content -->
+          <div id="inspectorContent" class="hidden">
+            <!-- Selection Toolbar -->
+            <div class="selection-toolbar">
+              <div class="selection-Toolbar-left">
+                <label class="checkbox-label select-all-label">
+                  <input type="checkbox" id="selectAllCheckbox" />
+                  <span id="selectAllLabelText">Select All Videos</span>
+                </label>
+                <button type="button" id="selectAllBtn" class="btn btn-secondary btn-sm">
+                  Select All
+                </button>
+                <span id="selectionSummaryText" class="selection-count-text" role="status" aria-live="polite">0 selected</span>
+              </div>
+
+              <div class="selection-toolbar-right">
+                <button type="button" id="saveSelectedBtn" class="btn btn-accent">
+                  + Save Selected to Batch List
+                </button>
+                <button type="button" id="selectAllAndSaveBtn" class="btn btn-primary" title="Select all videos in this link and immediately save to your batch queue">
+                  Select All &amp; Save to Batch
+                </button>
+              </div>
+            </div>
+
+            <!-- Multi-video notification banner (shown when videoCount > 1) -->
+            <div id="multiVideoNotice" class="alert alert-info hidden" role="status">
+              <strong>Multi-Video Album Detected!</strong> This Telegram link contains <span id="multiVideoCountSpan">multiple</span> videos. Use <strong>Select All</strong> to grab every video in this post and save them to your batch queue.
+            </div>
+
+            <!-- Video Cards List -->
+            <div id="resolvedVideosList" class="video-list" role="list"></div>
+          </div>
+        </section>
+      </div>
+
+      <!-- Right Column: Persistent Saved Batch Queue + Final Download All -->
+      <div class="workspace-col">
+        <section class="card batch-card" aria-labelledby="batchCardTitle">
+          <div class="card-header batch-header">
+            <div>
+              <span class="step-badge step-badge-success">Step 3</span>
+              <h2 id="batchCardTitle" class="card-title">
+                Saved Batch List
+                <span id="batchCountPill" class="count-pill">0</span>
+              </h2>
+              <p class="card-subtitle">Videos saved from one or more Telegram links. Paste additional links on the left to keep adding to this batch.</p>
+            </div>
+            <div class="batch-header-actions">
+              <button type="button" id="addAnotherLinkBtn" class="btn btn-secondary btn-sm" title="Focus the URL input to paste another Telegram link">
+                + Paste Another Link
+              </button>
+              <button type="button" id="clearBatchBtn" class="btn btn-ghost-danger btn-sm" disabled>
+                Clear List
+              </button>
+            </div>
+          </div>
+
+          <!-- Batch Queue Stats Summary -->
+          <div id="batchStatsBar" class="batch-stats-bar hidden">
+            <div class="stat-item">
+              <span class="stat-label">Saved Videos</span>
+              <strong id="statTotalVideos">0</strong>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">Source Links</span>
+              <strong id="statTotalLinks">0</strong>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">Est. Size</span>
+              <strong id="statTotalSize">0 MB</strong>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">Total Duration</span>
+              <strong id="statTotalDuration">0:00</strong>
+            </div>
+          </div>
+
+          <!-- Primary Batch Download Actions -->
+          <div class="batch-download-box">
+            <button type="button" id="downloadAllZipBtn" class="btn btn-success btn-lg btn-block" disabled>
+              <span id="downloadAllZipText">⬇ Download All Saved Videos (ZIP Archive)</span>
+            </button>
+            <div class="secondary-download-row">
+              <button type="button" id="downloadAllSequentialBtn" class="btn btn-secondary btn-block" disabled>
+                <span id="downloadAllSeqText">⬇ Download All Individually (Sequential MP4s)</span>
+              </button>
+            </div>
+            <div id="batchProgressBox" class="batch-progress hidden" role="status" aria-live="polite">
+              <div class="progress-bar-track">
+                <div id="batchProgressBar" class="progress-bar-fill"></div>
+              </div>
+              <p id="batchProgressText" class="progress-text">Preparing batch download...</p>
+            </div>
+          </div>
+
+          <!-- Empty State for Batch Queue -->
+          <div id="batchEmptyState" class="empty-state">
+            <div class="empty-icon" aria-hidden="true">📥</div>
+            <h3>Your Batch List is Empty</h3>
+            <p>
+              1. Inspect a Telegram link on the left.<br />
+              2. Preview or select the videos you want and click <strong>Save Selected to Batch List</strong>.<br />
+              3. Paste another link to add more videos, then click <strong>Download All Saved Videos</strong>!
+            </p>
+          </div>
+
+          <!-- Saved Batch Items List -->
+          <div id="batchItemsList" class="batch-list hidden" role="list"></div>
+        </section>
+      </div>
+    </main>
+
+    <!-- Toast Notification Container -->
+    <div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="true"></div>
+  </div>
+
+  <script src="/app.js" defer></script>
+</body>
+</html>
