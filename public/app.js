@@ -16,7 +16,9 @@
     selectedVideoIds: new Set(),
     batchQueue: [],
     isResolving: false,
-    isDownloadingBatch: false
+    isDownloadingBatch: false,
+    sequentialDownloadItems: null,
+    sequentialDownloadIndex: 0
   };
 
   // DOM Elements
@@ -85,6 +87,7 @@
     batchProgressBox: document.getElementById('batchProgressBox'),
     batchProgressBar: document.getElementById('batchProgressBar'),
     batchProgressText: document.getElementById('batchProgressText'),
+    batchNextDownloadBtn: document.getElementById('batchNextDownloadBtn'),
     batchEmptyState: document.getElementById('batchEmptyState'),
     batchItemsList: document.getElementById('batchItemsList'),
 
@@ -835,17 +838,18 @@
 
   function renderBatchQueue() {
     const count = state.batchQueue.length;
+    const manualSequentialActive = Array.isArray(state.sequentialDownloadItems);
     els.batchCountPill.textContent = String(count);
     els.clearBatchBtn.disabled = count === 0 || state.isDownloadingBatch;
     els.downloadAllZipBtn.disabled = count === 0 || state.isDownloadingBatch;
-    els.downloadAllSequentialBtn.disabled = count === 0 || state.isDownloadingBatch;
+    els.downloadAllSequentialBtn.disabled = count === 0 || (state.isDownloadingBatch && !manualSequentialActive);
 
     if (count === 0) {
       els.batchEmptyState.classList.remove('hidden');
       els.batchItemsList.classList.add('hidden');
       els.batchStatsBar.classList.add('hidden');
       els.downloadAllZipText.textContent = '⬇ Download All Saved Videos (ZIP Archive)';
-      els.downloadAllSeqText.textContent = '⬇ Download All Individually (Sequential MP4s)';
+      els.downloadAllSeqText.textContent = manualSequentialActive ? '✕ Cancel Remaining MP4 Downloads' : '⬇ Download All Individually (Sequential MP4s)';
       return;
     }
 
@@ -864,7 +868,9 @@
     els.statTotalDuration.textContent = formatDuration(totalDuration, anyLive);
 
     els.downloadAllZipText.textContent = `⬇ Download All ${count} Saved ${count === 1 ? 'Video' : 'Videos'} (ZIP Archive)`;
-    els.downloadAllSeqText.textContent = `⬇ Download All ${count} Individually (Sequential MP4s)`;
+    els.downloadAllSeqText.textContent = manualSequentialActive
+      ? '✕ Cancel Remaining MP4 Downloads'
+      : `⬇ Download All ${count} Individually (Sequential MP4s)`;
 
     els.batchItemsList.textContent = '';
     state.batchQueue.forEach((item, idx) => {
@@ -1016,12 +1022,83 @@
     }
   }
 
+  function requiresManualSequentialDownloads() {
+    const userAgent = navigator.userAgent || '';
+    return /iPhone|iPad|iPod/i.test(userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  }
+
+  function startDirectMp4Download(video) {
+    const link = document.createElement('a');
+    link.href = getSafeDownloadUrl(video, false);
+    link.download = sanitizeFileName(video.fileName, `${video.id}.mp4`);
+    link.hidden = true;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }
+
+  function downloadNextSequentialMp4() {
+    const items = state.sequentialDownloadItems;
+    const index = state.sequentialDownloadIndex;
+    if (!Array.isArray(items) || index >= items.length) return;
+
+    const item = items[index];
+    const fileName = sanitizeFileName(item.fileName, `${item.id}.mp4`);
+    startDirectMp4Download(item);
+    state.sequentialDownloadIndex += 1;
+
+    if (state.sequentialDownloadIndex < items.length) {
+      const nextItem = items[state.sequentialDownloadIndex];
+      const nextName = sanitizeFileName(nextItem.fileName, `${nextItem.id}.mp4`);
+      const percent = Math.round((state.sequentialDownloadIndex / items.length) * 100);
+      setBatchProgress(
+        true,
+        percent,
+        `Started ${fileName}. Tap below to download MP4 ${state.sequentialDownloadIndex + 1} of ${items.length}: ${nextName}.`
+      );
+      els.batchNextDownloadBtn.textContent = `⬇ Download MP4 ${state.sequentialDownloadIndex + 1} of ${items.length}`;
+      return;
+    }
+
+    state.sequentialDownloadItems = null;
+    state.sequentialDownloadIndex = 0;
+    state.isDownloadingBatch = false;
+    els.batchNextDownloadBtn.classList.add('hidden');
+    renderBatchQueue();
+    setBatchProgress(true, 100, `Started all ${items.length} MP4 downloads.`);
+    showToast(`Started all ${items.length} MP4 downloads.`, 'success');
+  }
+
+  function cancelManualSequentialDownloads() {
+    state.sequentialDownloadItems = null;
+    state.sequentialDownloadIndex = 0;
+    state.isDownloadingBatch = false;
+    els.batchNextDownloadBtn.classList.add('hidden');
+    setBatchProgress(false);
+    renderBatchQueue();
+    showToast('Cancelled the remaining MP4 downloads.', 'info');
+  }
+
   async function downloadAllSequentially() {
+    if (Array.isArray(state.sequentialDownloadItems)) {
+      cancelManualSequentialDownloads();
+      return;
+    }
     if (state.batchQueue.length === 0 || state.isDownloadingBatch) return;
 
     state.isDownloadingBatch = true;
     renderBatchQueue();
     const items = [...state.batchQueue];
+
+    if (requiresManualSequentialDownloads()) {
+      state.sequentialDownloadItems = items;
+      state.sequentialDownloadIndex = 0;
+      renderBatchQueue();
+      els.batchNextDownloadBtn.classList.remove('hidden');
+      downloadNextSequentialMp4();
+      return;
+    }
 
     try {
       for (let i = 0; i < items.length; i++) {
@@ -1153,6 +1230,7 @@
     els.clearBatchBtn.addEventListener('click', clearBatchQueue);
     els.downloadAllZipBtn.addEventListener('click', downloadAllAsZip);
     els.downloadAllSequentialBtn.addEventListener('click', downloadAllSequentially);
+    els.batchNextDownloadBtn.addEventListener('click', downloadNextSequentialMp4);
   }
 
   function init() {
